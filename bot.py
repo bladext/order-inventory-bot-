@@ -44,6 +44,7 @@ async def on_ready():
     
 @bot.command()
 async def ping(ctx):
+    print(f"Received ping command from {ctx.author} in {ctx.channel}")
     await ctx.send("Pong!")
     
 @bot.command()
