@@ -1,0 +1,11 @@
+{
+    "inventory_message_id": null,
+    "inventory": {
+        "weapon": {},
+        "armor": {},
+        "ammo": {},
+        "drugs": {},
+        "misc": {}
+    },
+    "loans": {}
+}
