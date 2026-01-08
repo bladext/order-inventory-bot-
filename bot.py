@@ -41,7 +41,11 @@ def save_data(data):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-
+    
+@bot.command()
+async def ping(ctx):
+    await ctx.send("Pong!")
+    
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setup_inventory(ctx):
