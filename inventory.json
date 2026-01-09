@@ -1,11 +1,12 @@
 {
-    "inventory_message_id": null,
-    "inventory": {
-        "weapon": {},
-        "armor": {},
-        "ammo": {},
-        "drugs": {},
-        "misc": {}
-    },
-    "loans": {}
+  "message_id": null,
+  "channel_id": null,
+  "inventory": {
+    "weapon": {},
+    "armor": {},
+    "ammo": {},
+    "drugs": {},
+    "misc": {}
+  },
+  "loans": {}
 }
