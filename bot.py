@@ -23,10 +23,19 @@ class OrderBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
-    async def setup_hook(self):
-        guild = discord.Object(id=GUILD_ID)
-        await self.tree.sync(guild=guild)
-        print("Slash commands synced cleanly to guild")
+   async def setup_hook(self):
+    guild = discord.Object(id=192108930388721664)
+
+    # DELETE all existing commands (this is the fix)
+    self.tree.clear_commands(guild=guild)
+    await self.tree.sync(guild=guild)
+
+    print("🔥 Old slash commands nuked")
+
+    # Re-sync fresh commands
+    await self.tree.sync(guild=guild)
+    print("✅ Fresh slash commands synced")
+
 
 bot = OrderBot()
 
