@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 print("Bot file loaded")
 
 # --------------------
-# Bot setup (MUST COME BEFORE EVENTS)
+# Bot setup
 # --------------------
 intents = discord.Intents.default()
 intents.message_content = True
@@ -25,7 +25,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 print("Token loaded:", "YES" if TOKEN else "NO")
 
 # --------------------
-# Events
+# Data handling
 # --------------------
 DATA_FILE = "inventory.json"
 
@@ -37,16 +37,21 @@ def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-
+# --------------------
+# Events
+# --------------------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    
+
+# --------------------
+# Commands
+# --------------------
 @bot.command()
 async def ping(ctx):
-    print(f"Received ping command from {ctx.author} in {ctx.channel}")
-    await ctx.send("Pong!")
-    
+    await ctx.send("🏓 Pong!")
+    await ctx.message.delete()
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setup_inventory(ctx):
@@ -73,7 +78,6 @@ async def setup_inventory(ctx):
 
     await ctx.send("✅ Inventory message created.", delete_after=5)
     await ctx.message.delete()
-
 
 # --------------------
 # Run bot
