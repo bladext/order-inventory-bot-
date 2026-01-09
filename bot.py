@@ -6,12 +6,15 @@ from discord import app_commands
 from discord.ext import commands
 
 # --------------------
-# Logging
+# CONFIG
 # --------------------
+GUILD_ID = 192108930388721664  # Order Discord server
+DATA_FILE = "inventory.json"
+
 logging.basicConfig(level=logging.INFO)
 
 # --------------------
-# Bot setup
+# BOT SETUP
 # --------------------
 intents = discord.Intents.default()
 intents.members = True
@@ -21,21 +24,18 @@ class OrderBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        await self.tree.sync()
-        print("Slash commands synced")
+        guild = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        print("Slash commands synced to Order server")
 
 bot = OrderBot()
 
-# --------------------
-# Environment
-# --------------------
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 # --------------------
-# Data
+# DATA FUNCTIONS
 # --------------------
-DATA_FILE = "inventory.json"
-
 def load_data():
     with open(DATA_FILE, "r") as f:
         return json.load(f)
@@ -45,7 +45,7 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 # --------------------
-# Helpers
+# INVENTORY DISPLAY
 # --------------------
 def format_category(items):
     if not items:
@@ -85,14 +85,14 @@ async def update_inventory_message():
     await msg.edit(embed=embed)
 
 # --------------------
-# Events
+# EVENTS
 # --------------------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
 # --------------------
-# Slash Commands
+# SLASH COMMANDS
 # --------------------
 @bot.tree.command(name="setup_inventory", description="Create the inventory board")
 @app_commands.checks.has_permissions(administrator=True)
@@ -117,7 +117,7 @@ async def setup_inventory(interaction: discord.Interaction):
     await interaction.response.send_message(
         embed=discord.Embed(
             title="✅ Inventory Created",
-            description="This message will now auto-update.",
+            description="This board will now auto-update.",
             color=discord.Color.green()
         ),
         ephemeral=True
@@ -148,11 +148,18 @@ async def deposit(interaction: discord.Interaction, category: app_commands.Choic
     )
 
 @bot.tree.command(name="withdraw", description="Withdraw items from inventory")
-async def withdraw(interaction: discord.Interaction, category: str, item: str, amount: int):
+@app_commands.choices(category=[
+    app_commands.Choice(name="Weapon", value="weapon"),
+    app_commands.Choice(name="Armor", value="armor"),
+    app_commands.Choice(name="Ammo", value="ammo"),
+    app_commands.Choice(name="Drugs", value="drugs"),
+    app_commands.Choice(name="Misc", value="misc")
+])
+async def withdraw(interaction: discord.Interaction, category: app_commands.Choice[str], item: str, amount: int):
     data = load_data()
-    inv = data["inventory"].get(category)
+    inv = data["inventory"][category.value]
 
-    if not inv or item not in inv or inv[item] < amount:
+    if item not in inv or inv[item] < amount:
         await interaction.response.send_message(
             embed=discord.Embed(
                 title="❌ Withdraw Failed",
@@ -222,6 +229,7 @@ async def pay(interaction: discord.Interaction, member: discord.Member, item: st
 
     save_data(data)
     await update_inventory_message()
+
     await interaction.response.send_message(
         embed=discord.Embed(
             title="✅ Loan Paid",
@@ -232,6 +240,9 @@ async def pay(interaction: discord.Interaction, member: discord.Member, item: st
     )
 
 # --------------------
-# Run
+# RUN
 # --------------------
+if not TOKEN:
+    raise RuntimeError("DISCORD_TOKEN missing")
+
 bot.run(TOKEN)
