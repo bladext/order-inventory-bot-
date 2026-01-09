@@ -23,12 +23,11 @@ class OrderBot(commands.Bot):
     async def setup_hook(self):
         guild = discord.Object(id=GUILD_ID)
 
-        # wipe old commands & resync clean
+        # Clear any ghost commands and resync cleanly
         self.tree.clear_commands(guild=guild)
         await self.tree.sync(guild=guild)
 
-        await self.tree.sync(guild=guild)
-        print("✅ Slash commands synced")
+        print("✅ Slash commands synced cleanly")
 
 bot = OrderBot()
 
@@ -80,14 +79,14 @@ def build_inventory_embed(data):
         embed.add_field(name=category.capitalize(), value=value, inline=False)
 
     if data["loans"]:
-        loans_text = ""
+        loan_text = ""
         for user, items in data["loans"].items():
-            loans_text += f"**{user}**\n"
+            loan_text += f"**{user}**\n"
             for item, amt in items.items():
-                loans_text += f"• {item}: {amt}\n"
-        embed.add_field(name="📄 Loans", value=loans_text, inline=False)
+                loan_text += f"• {item}: {amt}\n"
+        embed.add_field(name="📄 Loans", value=loan_text, inline=False)
 
-    embed.set_footer(text="Inventory auto-updates")
+    embed.set_footer(text="Auto-updating inventory")
     return embed
 
 async def update_inventory_message(channel):
@@ -107,7 +106,7 @@ async def update_inventory_message(channel):
     save_message({"channel_id": channel.id, "message_id": msg.id})
 
 # =====================
-# COMMANDS
+# COMMAND CHOICES
 # =====================
 CATEGORY_CHOICES = [
     app_commands.Choice(name="Weapons", value="weapons"),
@@ -117,30 +116,38 @@ CATEGORY_CHOICES = [
     app_commands.Choice(name="Misc", value="misc"),
 ]
 
+# =====================
+# SLASH COMMANDS
+# =====================
 @bot.tree.command(name="setup_inventory", description="Create the persistent inventory message")
 async def setup_inventory(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     await update_inventory_message(interaction.channel)
-    await interaction.response.send_message("✅ Inventory message created", ephemeral=True)
+    await interaction.followup.send("✅ Inventory message created")
 
 @bot.tree.command(name="deposit", description="Deposit items")
 @app_commands.choices(category=CATEGORY_CHOICES)
 async def deposit(interaction: discord.Interaction, category: app_commands.Choice[str], item: str, amount: int):
+    await interaction.response.defer(ephemeral=True)
+
     data = load_data()
     cat = category.value
     data[cat][item] = data[cat].get(item, 0) + amount
     save_data(data)
 
     await update_inventory_message(interaction.channel)
-    await interaction.response.send_message(f"📦 Deposited {amount}x {item}", ephemeral=True)
+    await interaction.followup.send(f"📦 Deposited {amount}x {item}")
 
 @bot.tree.command(name="withdraw", description="Withdraw items")
 @app_commands.choices(category=CATEGORY_CHOICES)
 async def withdraw(interaction: discord.Interaction, category: app_commands.Choice[str], item: str, amount: int):
+    await interaction.response.defer(ephemeral=True)
+
     data = load_data()
     cat = category.value
 
     if data[cat].get(item, 0) < amount:
-        await interaction.response.send_message("❌ Not enough stock", ephemeral=True)
+        await interaction.followup.send("❌ Not enough stock")
         return
 
     data[cat][item] -= amount
@@ -149,10 +156,12 @@ async def withdraw(interaction: discord.Interaction, category: app_commands.Choi
 
     save_data(data)
     await update_inventory_message(interaction.channel)
-    await interaction.response.send_message(f"📤 Withdrew {amount}x {item}", ephemeral=True)
+    await interaction.followup.send(f"📤 Withdrew {amount}x {item}")
 
 @bot.tree.command(name="loan", description="Loan items to a member")
 async def loan(interaction: discord.Interaction, member: discord.Member, item: str, amount: int):
+    await interaction.response.defer(ephemeral=True)
+
     data = load_data()
     user = str(member)
 
@@ -161,15 +170,17 @@ async def loan(interaction: discord.Interaction, member: discord.Member, item: s
 
     save_data(data)
     await update_inventory_message(interaction.channel)
-    await interaction.response.send_message(f"📄 Loaned {amount}x {item} to {member.mention}", ephemeral=True)
+    await interaction.followup.send(f"📄 Loaned {amount}x {item} to {member.mention}")
 
 @bot.tree.command(name="pay", description="Pay back loaned items")
 async def pay(interaction: discord.Interaction, item: str, amount: int):
+    await interaction.response.defer(ephemeral=True)
+
     data = load_data()
     user = str(interaction.user)
 
     if user not in data["loans"] or data["loans"][user].get(item, 0) < amount:
-        await interaction.response.send_message("❌ No such loan", ephemeral=True)
+        await interaction.followup.send("❌ No such loan")
         return
 
     data["loans"][user][item] -= amount
@@ -180,10 +191,10 @@ async def pay(interaction: discord.Interaction, item: str, amount: int):
 
     save_data(data)
     await update_inventory_message(interaction.channel)
-    await interaction.response.send_message(f"✅ Paid back {amount}x {item}", ephemeral=True)
+    await interaction.followup.send(f"✅ Paid back {amount}x {item}")
 
 # =====================
-# STARTUP
+# START BOT
 # =====================
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
