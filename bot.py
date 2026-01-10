@@ -4,7 +4,7 @@ from discord.ext import commands
 import json
 import os
 
-TOKEN = MTQ1ODYzNjYwMTMxOTIyNzYyOA.GtfTsz.4x33lYXaHePB_7bG3W5zXJS0toSPOqqVIb9Mc8
+TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = 192108930388721664
 
 INTENTS = discord.Intents.default()
