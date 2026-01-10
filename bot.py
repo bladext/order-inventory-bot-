@@ -5,9 +5,6 @@ import os
 import json
 import asyncio
 
-
-print("🚀 Order Inventory Bot booting fresh")
-
 # =====================
 # CONFIG
 # =====================
@@ -26,14 +23,17 @@ class OrderBot(commands.Bot):
 
     async def setup_hook(self):
         guild = discord.Object(id=GUILD_ID)
+
+        # FULL command reset + sync
         self.tree.clear_commands(guild=guild)
         await self.tree.sync(guild=guild)
-        print("✅ Slash commands synced cleanly")
+
+        print("✅ Slash commands synced")
 
 bot = OrderBot()
 
 # =====================
-# DATA HANDLING
+# DATA
 # =====================
 def default_data():
     return {
@@ -48,8 +48,17 @@ def default_data():
 def load_data():
     if not os.path.exists(DATA_FILE):
         save_data(default_data())
+
     with open(DATA_FILE, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+
+    # self-heal categories
+    base = default_data()
+    for k in base:
+        data.setdefault(k, {})
+
+    save_data(data)
+    return data
 
 def save_data(data):
     with open(DATA_FILE, "w") as f:
@@ -80,12 +89,12 @@ def build_inventory_embed(data):
         embed.add_field(name=cat.capitalize(), value=value, inline=False)
 
     if data["loans"]:
-        loans = ""
+        text = ""
         for user, items in data["loans"].items():
-            loans += f"**{user}**\n"
+            text += f"**{user}**\n"
             for item, amt in items.items():
-                loans += f"• {item}: {amt}\n"
-        embed.add_field(name="📄 Loans", value=loans, inline=False)
+                text += f"• {item}: {amt}\n"
+        embed.add_field(name="📄 Loans", value=text, inline=False)
 
     embed.set_footer(text="Auto-updating inventory")
     return embed
@@ -107,54 +116,57 @@ async def update_inventory_message(channel):
     save_message({"channel_id": channel.id, "message_id": msg.id})
 
 # =====================
-# CHOICES
+# CATEGORY DROPDOWN (STRING SAFE)
 # =====================
-CATEGORY_CHOICES = [
-    app_commands.Choice(name="Weapons", value="weapons"),
-    app_commands.Choice(name="Armor", value="armor"),
-    app_commands.Choice(name="Ammo", value="ammo"),
-    app_commands.Choice(name="Drugs", value="drugs"),
-    app_commands.Choice(name="Misc", value="misc"),
-]
+CATEGORY_LIST = ["weapons", "armor", "ammo", "drugs", "misc"]
+
+async def category_autocomplete(interaction: discord.Interaction, current: str):
+    return [
+        app_commands.Choice(name=c.capitalize(), value=c)
+        for c in CATEGORY_LIST if current.lower() in c
+    ]
 
 # =====================
-# COMMANDS (SAFE)
+# COMMANDS
 # =====================
-@bot.tree.command(name="setup_inventory", description="Create the persistent inventory message")
+@bot.tree.command(name="setup_inventory")
 async def setup_inventory(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Inventory system ready", ephemeral=True)
     asyncio.create_task(update_inventory_message(interaction.channel))
 
-@bot.tree.command(name="deposit", description="Deposit items")
-@app_commands.choices(category=CATEGORY_CHOICES)
-async def deposit(interaction: discord.Interaction, category: app_commands.Choice[str], item: str, amount: int):
+@bot.tree.command(name="deposit")
+@app_commands.autocomplete(category=category_autocomplete)
+async def deposit(interaction: discord.Interaction, category: str, item: str, amount: int):
     data = load_data()
-    cat = category.value
-    data[cat][item] = data[cat].get(item, 0) + amount
+
+    if category not in data:
+        await interaction.response.send_message("❌ Invalid category", ephemeral=True)
+        return
+
+    data[category][item] = data[category].get(item, 0) + amount
     save_data(data)
 
     await interaction.response.send_message(f"📦 Deposited {amount}x {item}", ephemeral=True)
     asyncio.create_task(update_inventory_message(interaction.channel))
 
-@bot.tree.command(name="withdraw", description="Withdraw items")
-@app_commands.choices(category=CATEGORY_CHOICES)
-async def withdraw(interaction: discord.Interaction, category: app_commands.Choice[str], item: str, amount: int):
+@bot.tree.command(name="withdraw")
+@app_commands.autocomplete(category=category_autocomplete)
+async def withdraw(interaction: discord.Interaction, category: str, item: str, amount: int):
     data = load_data()
-    cat = category.value
 
-    if data[cat].get(item, 0) < amount:
+    if data[category].get(item, 0) < amount:
         await interaction.response.send_message("❌ Not enough stock", ephemeral=True)
         return
 
-    data[cat][item] -= amount
-    if data[cat][item] == 0:
-        del data[cat][item]
+    data[category][item] -= amount
+    if data[category][item] == 0:
+        del data[category][item]
 
     save_data(data)
     await interaction.response.send_message(f"📤 Withdrew {amount}x {item}", ephemeral=True)
     asyncio.create_task(update_inventory_message(interaction.channel))
 
-@bot.tree.command(name="loan", description="Loan items to a member")
+@bot.tree.command(name="loan")
 async def loan(interaction: discord.Interaction, member: discord.Member, item: str, amount: int):
     data = load_data()
     user = str(member)
@@ -163,13 +175,10 @@ async def loan(interaction: discord.Interaction, member: discord.Member, item: s
     data["loans"][user][item] = data["loans"][user].get(item, 0) + amount
     save_data(data)
 
-    await interaction.response.send_message(
-        f"📄 Loaned {amount}x {item} to {member.mention}",
-        ephemeral=True
-    )
+    await interaction.response.send_message(f"📄 Loaned {amount}x {item} to {member.mention}", ephemeral=True)
     asyncio.create_task(update_inventory_message(interaction.channel))
 
-@bot.tree.command(name="pay", description="Pay back loaned items")
+@bot.tree.command(name="pay")
 async def pay(interaction: discord.Interaction, item: str, amount: int):
     data = load_data()
     user = str(interaction.user)
