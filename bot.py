@@ -1,68 +1,34 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import os
 import json
-import asyncio
+import os
 
-# =====================
-# CONFIG
-# =====================
+TOKEN = MTQ1ODYzNjYwMTMxOTIyNzYyOA.GtfTsz.4x33lYXaHePB_7bG3W5zXJS0toSPOqqVIb9Mc8
 GUILD_ID = 192108930388721664
-DATA_FILE = "inventory.json"
+
+INTENTS = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=INTENTS)
+
+INVENTORY_FILE = "inventory.json"
 MESSAGE_FILE = "message.json"
 
-intents = discord.Intents.default()
+CATEGORIES = ["weapons", "armor", "ammo", "drugs", "misc"]
 
-# =====================
-# BOT
-# =====================
-class OrderBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+# ------------------------
+# Utility Functions
+# ------------------------
 
-    async def setup_hook(self):
-        guild = discord.Object(id=GUILD_ID)
-
-        # FULL command reset + sync
-        self.tree.clear_commands(guild=guild)
-        await self.tree.sync(guild=guild)
-
-        print("✅ Slash commands synced")
-
-bot = OrderBot()
-
-# =====================
-# DATA
-# =====================
-def default_data():
-    return {
-        "weapons": {},
-        "armor": {},
-        "ammo": {},
-        "drugs": {},
-        "misc": {},
-        "loans": {}
-    }
-
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        save_data(default_data())
-
-    with open(DATA_FILE, "r") as f:
+def load_inventory():
+    if not os.path.exists(INVENTORY_FILE):
+        return {c: {} for c in CATEGORIES}, {}
+    with open(INVENTORY_FILE, "r") as f:
         data = json.load(f)
+    return data.get("inventory", {}), data.get("loans", {})
 
-    # self-heal categories
-    base = default_data()
-    for k in base:
-        data.setdefault(k, {})
-
-    save_data(data)
-    return data
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+def save_inventory(inventory, loans):
+    with open(INVENTORY_FILE, "w") as f:
+        json.dump({"inventory": inventory, "loans": loans}, f, indent=2)
 
 def load_message():
     if not os.path.exists(MESSAGE_FILE):
@@ -74,134 +40,173 @@ def save_message(data):
     with open(MESSAGE_FILE, "w") as f:
         json.dump(data, f)
 
-# =====================
-# EMBED
-# =====================
-def build_inventory_embed(data):
+async def update_embed(guild):
+    inventory, loans = load_inventory()
+    msg_data = load_message()
+    if not msg_data:
+        return
+
+    channel = guild.get_channel(msg_data["channel_id"])
+    if not channel:
+        return
+
+    message = await channel.fetch_message(msg_data["message_id"])
+
     embed = discord.Embed(
-        title="📦 Ørder Inventory",
-        color=discord.Color.dark_gold()
+        title="📦 Ørder Storage",
+        color=discord.Color.dark_red()
     )
 
-    for cat in ["weapons", "armor", "ammo", "drugs", "misc"]:
-        items = data[cat]
-        value = "Empty" if not items else "\n".join(f"{k}: {v}" for k, v in items.items())
-        embed.add_field(name=cat.capitalize(), value=value, inline=False)
+    for category in CATEGORIES:
+        items = inventory.get(category, {})
+        text = "\n".join(f"• {k}: {v}" for k, v in items.items()) or "—"
+        embed.add_field(name=category.capitalize(), value=text, inline=False)
 
-    if data["loans"]:
-        text = ""
-        for user, items in data["loans"].items():
-            text += f"**{user}**\n"
-            for item, amt in items.items():
-                text += f"• {item}: {amt}\n"
-        embed.add_field(name="📄 Loans", value=text, inline=False)
+    loan_text = []
+    for user, items in loans.items():
+        for item, amt in items.items():
+            loan_text.append(f"<@{user}> owes {amt}x {item}")
+    embed.add_field(
+        name="📄 Loans",
+        value="\n".join(loan_text) or "—",
+        inline=False
+    )
 
-    embed.set_footer(text="Auto-updating inventory")
-    return embed
+    await message.edit(embed=embed)
 
-async def update_inventory_message(channel):
-    data = load_data()
-    embed = build_inventory_embed(data)
+# ------------------------
+# Bot Setup (CRITICAL FIX)
+# ------------------------
 
-    saved = load_message()
-    if saved:
-        try:
-            msg = await channel.fetch_message(saved["message_id"])
-            await msg.edit(embed=embed)
-            return
-        except:
-            pass
+@bot.event
+async def setup_hook():
+    guild = discord.Object(id=GUILD_ID)
 
-    msg = await channel.send(embed=embed)
-    save_message({"channel_id": channel.id, "message_id": msg.id})
+    # 🔥 DELETE ALL GLOBAL COMMANDS (fixes your crash)
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
 
-# =====================
-# CATEGORY DROPDOWN (STRING SAFE)
-# =====================
-CATEGORY_LIST = ["weapons", "armor", "ammo", "drugs", "misc"]
+    # ✅ REGISTER CLEAN GUILD COMMANDS ONLY
+    bot.tree.copy_global_to(guild=guild)
+    await bot.tree.sync(guild=guild)
 
-async def category_autocomplete(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=c.capitalize(), value=c)
-        for c in CATEGORY_LIST if current.lower() in c
-    ]
+    print("🔥 Global commands purged, guild commands synced")
 
-# =====================
-# COMMANDS
-# =====================
+# ------------------------
+# Events
+# ------------------------
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+
+# ------------------------
+# Slash Commands
+# ------------------------
+
 @bot.tree.command(name="setup_inventory")
 async def setup_inventory(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Inventory system ready", ephemeral=True)
-    asyncio.create_task(update_inventory_message(interaction.channel))
+    inventory, loans = load_inventory()
+
+    embed = discord.Embed(
+        title="📦 Ørder Storage",
+        description="Inventory tracking is now active.",
+        color=discord.Color.dark_red()
+    )
+
+    msg = await interaction.channel.send(embed=embed)
+    save_message({
+        "channel_id": interaction.channel.id,
+        "message_id": msg.id
+    })
+
+    await interaction.response.send_message("✅ Storage setup complete.", ephemeral=True)
+    await update_embed(interaction.guild)
 
 @bot.tree.command(name="deposit")
-@app_commands.autocomplete(category=category_autocomplete)
-async def deposit(interaction: discord.Interaction, category: str, item: str, amount: int):
-    data = load_data()
+async def deposit(
+    interaction: discord.Interaction,
+    category: str,
+    item: str,
+    amount: int
+):
+    category = category.lower()
 
-    if category not in data:
-        await interaction.response.send_message("❌ Invalid category", ephemeral=True)
+    if category not in CATEGORIES:
+        await interaction.response.send_message("❌ Invalid category.", ephemeral=True)
         return
 
-    data[category][item] = data[category].get(item, 0) + amount
-    save_data(data)
+    inventory, loans = load_inventory()
+    inventory.setdefault(category, {})
+    inventory[category][item] = inventory[category].get(item, 0) + amount
+    save_inventory(inventory, loans)
 
-    await interaction.response.send_message(f"📦 Deposited {amount}x {item}", ephemeral=True)
-    asyncio.create_task(update_inventory_message(interaction.channel))
+    await interaction.response.send_message(f"✅ Deposited {amount}x {item}.", ephemeral=True)
+    await update_embed(interaction.guild)
 
 @bot.tree.command(name="withdraw")
-@app_commands.autocomplete(category=category_autocomplete)
-async def withdraw(interaction: discord.Interaction, category: str, item: str, amount: int):
-    data = load_data()
+async def withdraw(
+    interaction: discord.Interaction,
+    category: str,
+    item: str,
+    amount: int
+):
+    category = category.lower()
+    inventory, loans = load_inventory()
 
-    if data[category].get(item, 0) < amount:
-        await interaction.response.send_message("❌ Not enough stock", ephemeral=True)
+    if inventory.get(category, {}).get(item, 0) < amount:
+        await interaction.response.send_message("❌ Not enough stock.", ephemeral=True)
         return
 
-    data[category][item] -= amount
-    if data[category][item] == 0:
-        del data[category][item]
+    inventory[category][item] -= amount
+    if inventory[category][item] <= 0:
+        del inventory[category][item]
 
-    save_data(data)
-    await interaction.response.send_message(f"📤 Withdrew {amount}x {item}", ephemeral=True)
-    asyncio.create_task(update_inventory_message(interaction.channel))
+    save_inventory(inventory, loans)
+    await interaction.response.send_message(f"📤 Withdrew {amount}x {item}.", ephemeral=True)
+    await update_embed(interaction.guild)
 
 @bot.tree.command(name="loan")
-async def loan(interaction: discord.Interaction, member: discord.Member, item: str, amount: int):
-    data = load_data()
-    user = str(member)
+async def loan(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    item: str,
+    amount: int
+):
+    inventory, loans = load_inventory()
 
-    data["loans"].setdefault(user, {})
-    data["loans"][user][item] = data["loans"][user].get(item, 0) + amount
-    save_data(data)
+    loans.setdefault(str(member.id), {})
+    loans[str(member.id)][item] = loans[str(member.id)].get(item, 0) + amount
 
-    await interaction.response.send_message(f"📄 Loaned {amount}x {item} to {member.mention}", ephemeral=True)
-    asyncio.create_task(update_inventory_message(interaction.channel))
+    save_inventory(inventory, loans)
+    await interaction.response.send_message(f"📄 Loaned {amount}x {item} to {member.mention}.", ephemeral=True)
+    await update_embed(interaction.guild)
 
 @bot.tree.command(name="pay")
-async def pay(interaction: discord.Interaction, item: str, amount: int):
-    data = load_data()
-    user = str(interaction.user)
+async def pay(
+    interaction: discord.Interaction,
+    item: str,
+    amount: int
+):
+    inventory, loans = load_inventory()
+    uid = str(interaction.user.id)
 
-    if user not in data["loans"] or data["loans"][user].get(item, 0) < amount:
-        await interaction.response.send_message("❌ No such loan", ephemeral=True)
+    if uid not in loans or loans[uid].get(item, 0) < amount:
+        await interaction.response.send_message("❌ No such loan.", ephemeral=True)
         return
 
-    data["loans"][user][item] -= amount
-    if data["loans"][user][item] == 0:
-        del data["loans"][user][item]
-    if not data["loans"][user]:
-        del data["loans"][user]
+    loans[uid][item] -= amount
+    if loans[uid][item] <= 0:
+        del loans[uid][item]
+    if not loans[uid]:
+        del loans[uid]
 
-    save_data(data)
-    await interaction.response.send_message(f"✅ Paid back {amount}x {item}", ephemeral=True)
-    asyncio.create_task(update_inventory_message(interaction.channel))
+    save_inventory(inventory, loans)
+    await interaction.response.send_message(f"✅ Paid back {amount}x {item}.", ephemeral=True)
+    await update_embed(interaction.guild)
 
-# =====================
-# START
-# =====================
-TOKEN = os.getenv("DISCORD_TOKEN")
-if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN not set")
+# ------------------------
+# Run Bot
+# ------------------------
 
 bot.run(TOKEN)
