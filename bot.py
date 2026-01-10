@@ -5,6 +5,9 @@ import os
 import json
 import asyncio
 
+
+print("🚀 Order Inventory Bot booting fresh")
+
 # =====================
 # CONFIG
 # =====================
