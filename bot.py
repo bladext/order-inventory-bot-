@@ -7,7 +7,9 @@ import os
 # ================= CONFIG =================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = 192108930388721664  # YOUR SERVER ID
+GUILD_ID = 192108930388721664
+STAFF_LOG_CHANNEL_ID = 123456789012345678  # <-- CHANGE THIS
+REQUIRED_ROLE = "Hierarchy"
 
 INVENTORY_FILE = "inventory.json"
 MESSAGE_FILE = "message.json"
@@ -18,6 +20,11 @@ CATEGORIES = ["weapons", "armor", "ammo", "drugs", "misc"]
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# ================= PERMISSION CHECK =================
+
+def has_hierarchy(interaction: discord.Interaction) -> bool:
+    return any(role.name == REQUIRED_ROLE for role in interaction.user.roles)
 
 # ================= FILE HELPERS =================
 
@@ -30,11 +37,7 @@ def load_data():
 
 def save_data(inventory, loans):
     with open(INVENTORY_FILE, "w") as f:
-        json.dump(
-            {"inventory": inventory, "loans": loans},
-            f,
-            indent=2
-        )
+        json.dump({"inventory": inventory, "loans": loans}, f, indent=2)
 
 def load_message():
     if not os.path.exists(MESSAGE_FILE):
@@ -46,15 +49,21 @@ def save_message(data):
     with open(MESSAGE_FILE, "w") as f:
         json.dump(data, f)
 
-# ================= EMBED UPDATE =================
+# ================= LOGGING =================
 
-async def update_inventory_embed(guild: discord.Guild):
+async def log_action(guild, message):
+    channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+    if channel:
+        await channel.send(message)
+
+# ================= EMBED =================
+
+async def update_inventory_embed(guild):
     msg_data = load_message()
     if not msg_data:
         return
 
     inventory, loans = load_data()
-
     channel = guild.get_channel(msg_data["channel_id"])
     if not channel:
         return
@@ -69,22 +78,22 @@ async def update_inventory_embed(guild: discord.Guild):
     for cat in CATEGORIES:
         items = inventory.get(cat, {})
         value = "\n".join(f"• {k}: {v}" for k, v in items.items()) or "—"
-        embed.add_field(
-            name=cat.capitalize(),
-            value=value,
-            inline=False
-        )
+        embed.add_field(name=cat.capitalize(), value=value, inline=False)
 
-    loan_lines = []
-    for uid, items in loans.items():
-        for item, amt in items.items():
-            loan_lines.append(f"<@{uid}> owes {amt}x {item}")
+    loans_lines = []
 
-    embed.add_field(
-        name="📄 Loans",
-        value="\n".join(loan_lines) or "—",
-        inline=False
-    )
+for uid, items in loans.items():
+    user_block = [f"<@{uid}>"]
+    for item, amt in items.items():
+        user_block.append(f"• {amt}x {item}")
+    loans_lines.append("\n".join(user_block))
+
+embed.add_field(
+    name="📄 Loans",
+    value="\n\n".join(loans_lines) if loans_lines else "—",
+    inline=False
+)
+
 
     await message.edit(embed=embed)
 
@@ -93,86 +102,76 @@ async def update_inventory_embed(guild: discord.Guild):
 @bot.event
 async def setup_hook():
     guild = discord.Object(id=GUILD_ID)
-
-    # 🚨 DELETE ALL GLOBAL COMMANDS
     bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
-
-    # ✅ REGISTER GUILD COMMANDS ONLY
     await bot.tree.sync(guild=guild)
-
     print("🔥 GUILD SLASH COMMANDS SYNCED 🔥")
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    for g in bot.guilds:
-        print("Connected to:", g.name, g.id)
+
+# ================= AUTOCOMPLETE =================
+
+async def category_autocomplete(_, current: str):
+    return [
+        app_commands.Choice(name=c, value=c)
+        for c in CATEGORIES if current.lower() in c
+    ]
 
 # ================= COMMANDS =================
 
-@bot.tree.command(name="ping", description="Test command", guild=discord.Object(id=GUILD_ID))
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("🏓 Pong!", ephemeral=True)
+@bot.tree.command(name="inventory", description="View inventory", guild=discord.Object(id=GUILD_ID))
+async def inventory(interaction: discord.Interaction):
+    msg_data = load_message()
+    if not msg_data:
+        await interaction.response.send_message("❌ Inventory not set up.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("📦 Inventory displayed above.", ephemeral=True)
 
 @bot.tree.command(name="setup_inventory", description="Create inventory embed", guild=discord.Object(id=GUILD_ID))
 async def setup_inventory(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="📦 Ørder Storage",
-        description="Inventory initialized",
-        color=discord.Color.dark_red()
-    )
+    embed = discord.Embed(title="📦 Ørder Storage", color=discord.Color.dark_red())
     msg = await interaction.channel.send(embed=embed)
-    save_message({
-        "channel_id": interaction.channel.id,
-        "message_id": msg.id
-    })
-
-    await interaction.response.send_message(
-        "✅ Inventory setup complete.",
-        ephemeral=True
-    )
+    save_message({"channel_id": interaction.channel.id, "message_id": msg.id})
+    await interaction.response.send_message("✅ Inventory setup complete.", ephemeral=True)
     await update_inventory_embed(interaction.guild)
 
-@bot.tree.command(name="deposit", description="Deposit items", guild=discord.Object(id=GUILD_ID))
-async def deposit(
-    interaction: discord.Interaction,
-    category: str,
-    item: str,
-    amount: int
-):
-    category = category.lower()
-    if category not in CATEGORIES:
-        await interaction.response.send_message(
-            f"❌ Invalid category. Use: {', '.join(CATEGORIES)}",
-            ephemeral=True
-        )
+@bot.tree.command(name="deposit", guild=discord.Object(id=GUILD_ID))
+@app_commands.autocomplete(category=category_autocomplete)
+async def deposit(interaction: discord.Interaction, category: str, item: str, amount: int):
+    if not has_hierarchy(interaction):
+        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
         return
 
     inventory, loans = load_data()
     inventory.setdefault(category, {})
     inventory[category][item] = inventory[category].get(item, 0) + amount
-
     save_data(inventory, loans)
 
-    await interaction.response.send_message("✅ Deposited.", ephemeral=True)
+    await interaction.response.send_message(
+        f"✅ Deposited **{amount}x {item}** into **{category}**.",
+        ephemeral=True
+    )
+
+    await log_action(
+        interaction.guild,
+        f"📥 **Deposit** | {interaction.user.mention} added {amount}x {item} ({category})"
+    )
+
     await update_inventory_embed(interaction.guild)
 
-@bot.tree.command(name="withdraw", description="Withdraw items", guild=discord.Object(id=GUILD_ID))
-async def withdraw(
-    interaction: discord.Interaction,
-    category: str,
-    item: str,
-    amount: int
-):
-    category = category.lower()
-    inventory, loans = load_data()
+@bot.tree.command(name="withdraw", guild=discord.Object(id=GUILD_ID))
+@app_commands.autocomplete(category=category_autocomplete)
+async def withdraw(interaction: discord.Interaction, category: str, item: str, amount: int):
+    if not has_hierarchy(interaction):
+        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+        return
 
+    inventory, loans = load_data()
     if inventory.get(category, {}).get(item, 0) < amount:
-        await interaction.response.send_message(
-            "❌ Not enough stock.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("❌ Not enough stock.", ephemeral=True)
         return
 
     inventory[category][item] -= amount
@@ -181,50 +180,39 @@ async def withdraw(
 
     save_data(inventory, loans)
 
-    await interaction.response.send_message("📤 Withdrawn.", ephemeral=True)
+    await interaction.response.send_message(
+        f"📤 Withdrew **{amount}x {item}** from **{category}**.",
+        ephemeral=True
+    )
+
+    await log_action(
+        interaction.guild,
+        f"📤 **Withdraw** | {interaction.user.mention} took {amount}x {item} ({category})"
+    )
+
     await update_inventory_embed(interaction.guild)
 
-@bot.tree.command(name="loan", description="Loan items", guild=discord.Object(id=GUILD_ID))
-async def loan(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    item: str,
-    amount: int
-):
+@bot.tree.command(name="loan", guild=discord.Object(id=GUILD_ID))
+async def loan(interaction: discord.Interaction, member: discord.Member, item: str, amount: int):
+    if not has_hierarchy(interaction):
+        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+        return
+
     inventory, loans = load_data()
     loans.setdefault(str(member.id), {})
     loans[str(member.id)][item] = loans[str(member.id)].get(item, 0) + amount
-
     save_data(inventory, loans)
 
-    await interaction.response.send_message("📄 Loan recorded.", ephemeral=True)
-    await update_inventory_embed(interaction.guild)
+    await interaction.response.send_message(
+        f"📄 Loaned **{amount}x {item}** to {member.mention}.",
+        ephemeral=True
+    )
 
-@bot.tree.command(name="pay", description="Pay back loans", guild=discord.Object(id=GUILD_ID))
-async def pay(
-    interaction: discord.Interaction,
-    item: str,
-    amount: int
-):
-    inventory, loans = load_data()
-    uid = str(interaction.user.id)
+    await log_action(
+        interaction.guild,
+        f"📄 **Loan** | {interaction.user.mention} loaned {amount}x {item} to {member.mention}"
+    )
 
-    if uid not in loans or loans[uid].get(item, 0) < amount:
-        await interaction.response.send_message(
-            "❌ No matching loan found.",
-            ephemeral=True
-        )
-        return
-
-    loans[uid][item] -= amount
-    if loans[uid][item] <= 0:
-        del loans[uid][item]
-    if not loans[uid]:
-        del loans[uid]
-
-    save_data(inventory, loans)
-
-    await interaction.response.send_message("✅ Loan paid.", ephemeral=True)
     await update_inventory_embed(interaction.guild)
 
 # ================= RUN =================
