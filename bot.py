@@ -161,6 +161,57 @@ async def deposit(interaction: discord.Interaction, category: str, item: str, am
 
     await update_inventory_embed(interaction.guild)
 
+@bot.tree.command(name="pay", guild=discord.Object(id=GUILD_ID))
+async def pay(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    item: str,
+    amount: int
+):
+    if not has_hierarchy(interaction):
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
+        return
+
+    inventory, loans = load_data()
+    user_id = str(member.id)
+
+    if user_id not in loans or item not in loans[user_id]:
+        await interaction.response.send_message(
+            "❌ That loan does not exist.",
+            ephemeral=True
+        )
+        return
+
+    if amount > loans[user_id][item]:
+        await interaction.response.send_message(
+            "❌ Cannot pay more than owed.",
+            ephemeral=True
+        )
+        return
+
+    # Deduct from loan
+    loans[user_id][item] -= amount
+    if loans[user_id][item] <= 0:
+        del loans[user_id][item]
+
+    if not loans[user_id]:
+        del loans[user_id]
+
+    save_data(inventory, loans)
+
+    await interaction.response.send_message(
+        f"✅ **{amount}x {item}** paid back by {member.mention}.",
+        ephemeral=True
+    )
+
+    await log_action(
+        interaction.guild,
+        f"💰 Pay | {interaction.user.mention} marked {amount}x {item} as paid by {member.mention}"
+    )
+
+    await update_inventory_embed(interaction.guild)
+
+
 @bot.tree.command(name="withdraw", guild=discord.Object(id=GUILD_ID))
 @app_commands.autocomplete(category=category_autocomplete)
 async def withdraw(interaction: discord.Interaction, category: str, item: str, amount: int):
