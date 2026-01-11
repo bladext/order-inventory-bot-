@@ -74,8 +74,17 @@ async def update_inventory_embed(guild):
 
 @bot.event
 async def setup_hook():
+    GUILD_ID = 192108930388721664  # your server ID
+    guild = discord.Object(id=GUILD_ID)
+
+    # Clear global commands (prevents cache conflicts)
+    bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
-    print("✅ Global slash commands synced")
+
+    # Sync guild-only commands (instant)
+    await bot.tree.sync(guild=guild)
+
+    print("✅ Guild slash commands synced")
 
 @bot.event
 async def on_ready():
