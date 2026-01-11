@@ -75,25 +75,25 @@ async def update_inventory_embed(guild):
         color=discord.Color.dark_red()
     )
 
+    # Inventory sections
     for cat in CATEGORIES:
         items = inventory.get(cat, {})
         value = "\n".join(f"• {k}: {v}" for k, v in items.items()) or "—"
         embed.add_field(name=cat.capitalize(), value=value, inline=False)
 
+    # Loans (grouped per user)
     loans_lines = []
+    for uid, items in loans.items():
+        user_block = [f"<@{uid}>"]
+        for item, amt in items.items():
+            user_block.append(f"• {amt}x {item}")
+        loans_lines.append("\n".join(user_block))
 
-for uid, items in loans.items():
-    user_block = [f"<@{uid}>"]
-    for item, amt in items.items():
-        user_block.append(f"• {amt}x {item}")
-    loans_lines.append("\n".join(user_block))
-
-embed.add_field(
-    name="📄 Loans",
-    value="\n\n".join(loans_lines) if loans_lines else "—",
-    inline=False
-)
-
+    embed.add_field(
+        name="📄 Loans",
+        value="\n\n".join(loans_lines) if loans_lines else "—",
+        inline=False
+    )
 
     await message.edit(embed=embed)
 
@@ -116,19 +116,18 @@ async def on_ready():
 async def category_autocomplete(_, current: str):
     return [
         app_commands.Choice(name=c, value=c)
-        for c in CATEGORIES if current.lower() in c
+        for c in CATEGORIES
+        if current.lower() in c
     ]
 
 # ================= COMMANDS =================
 
 @bot.tree.command(name="inventory", description="View inventory", guild=discord.Object(id=GUILD_ID))
 async def inventory(interaction: discord.Interaction):
-    msg_data = load_message()
-    if not msg_data:
-        await interaction.response.send_message("❌ Inventory not set up.", ephemeral=True)
-        return
-
-    await interaction.response.send_message("📦 Inventory displayed above.", ephemeral=True)
+    await interaction.response.send_message(
+        "📦 Inventory is shown above.",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="setup_inventory", description="Create inventory embed", guild=discord.Object(id=GUILD_ID))
 async def setup_inventory(interaction: discord.Interaction):
@@ -142,7 +141,7 @@ async def setup_inventory(interaction: discord.Interaction):
 @app_commands.autocomplete(category=category_autocomplete)
 async def deposit(interaction: discord.Interaction, category: str, item: str, amount: int):
     if not has_hierarchy(interaction):
-        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
         return
 
     inventory, loans = load_data()
@@ -157,7 +156,7 @@ async def deposit(interaction: discord.Interaction, category: str, item: str, am
 
     await log_action(
         interaction.guild,
-        f"📥 **Deposit** | {interaction.user.mention} added {amount}x {item} ({category})"
+        f"📥 Deposit | {interaction.user.mention} added {amount}x {item} ({category})"
     )
 
     await update_inventory_embed(interaction.guild)
@@ -166,7 +165,7 @@ async def deposit(interaction: discord.Interaction, category: str, item: str, am
 @app_commands.autocomplete(category=category_autocomplete)
 async def withdraw(interaction: discord.Interaction, category: str, item: str, amount: int):
     if not has_hierarchy(interaction):
-        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
         return
 
     inventory, loans = load_data()
@@ -187,7 +186,7 @@ async def withdraw(interaction: discord.Interaction, category: str, item: str, a
 
     await log_action(
         interaction.guild,
-        f"📤 **Withdraw** | {interaction.user.mention} took {amount}x {item} ({category})"
+        f"📤 Withdraw | {interaction.user.mention} took {amount}x {item} ({category})"
     )
 
     await update_inventory_embed(interaction.guild)
@@ -195,7 +194,7 @@ async def withdraw(interaction: discord.Interaction, category: str, item: str, a
 @bot.tree.command(name="loan", guild=discord.Object(id=GUILD_ID))
 async def loan(interaction: discord.Interaction, member: discord.Member, item: str, amount: int):
     if not has_hierarchy(interaction):
-        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
         return
 
     inventory, loans = load_data()
@@ -210,7 +209,7 @@ async def loan(interaction: discord.Interaction, member: discord.Member, item: s
 
     await log_action(
         interaction.guild,
-        f"📄 **Loan** | {interaction.user.mention} loaned {amount}x {item} to {member.mention}"
+        f"📄 Loan | {interaction.user.mention} loaned {amount}x {item} to {member.mention}"
     )
 
     await update_inventory_embed(interaction.guild)
