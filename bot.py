@@ -7,8 +7,9 @@ import os
 # ================= CONFIG =================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = 192108930388721664
-STAFF_LOG_CHANNEL_ID = 1459705984657129543
+
+GUILD_ID = 192108930388721664  # your server
+STAFF_LOG_CHANNEL_ID = 123456789012345678  # CHANGE THIS
 REQUIRED_ROLE = "Hierarchy"
 
 INVENTORY_FILE = "inventory.json"
@@ -21,7 +22,7 @@ CATEGORIES = ["weapons", "armor", "ammo", "drugs", "misc"]
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ================= PERMISSION CHECK =================
+# ================= PERMISSION =================
 
 def has_hierarchy(interaction: discord.Interaction) -> bool:
     return any(role.name == REQUIRED_ROLE for role in interaction.user.roles)
@@ -75,7 +76,7 @@ async def update_inventory_embed(guild):
         color=discord.Color.dark_red()
     )
 
-    # Inventory sections
+    # Inventory
     for cat in CATEGORIES:
         items = inventory.get(cat, {})
         value = "\n".join(f"• {k}: {v}" for k, v in items.items()) or "—"
@@ -84,10 +85,10 @@ async def update_inventory_embed(guild):
     # Loans (grouped per user)
     loans_lines = []
     for uid, items in loans.items():
-        user_block = [f"<@{uid}>"]
+        block = [f"<@{uid}>"]
         for item, amt in items.items():
-            user_block.append(f"• {amt}x {item}")
-        loans_lines.append("\n".join(user_block))
+            block.append(f"• {amt}x {item}")
+        loans_lines.append("\n".join(block))
 
     embed.add_field(
         name="📄 Loans",
@@ -116,20 +117,23 @@ async def on_ready():
 async def category_autocomplete(_, current: str):
     return [
         app_commands.Choice(name=c, value=c)
-        for c in CATEGORIES
-        if current.lower() in c
+        for c in CATEGORIES if current.lower() in c
     ]
 
 # ================= COMMANDS =================
 
-@bot.tree.command(name="inventory", description="View inventory", guild=discord.Object(id=GUILD_ID))
-async def inventory(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        "📦 Inventory is shown above.",
-        ephemeral=True
-    )
+@bot.tree.command(name="ping", guild=discord.Object(id=GUILD_ID))
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("🏓 Pong!", ephemeral=True)
 
-@bot.tree.command(name="setup_inventory", description="Create inventory embed", guild=discord.Object(id=GUILD_ID))
+@bot.tree.command(name="inventory", guild=discord.Object(id=GUILD_ID))
+async def inventory(interaction: discord.Interaction):
+    if not load_message():
+        await interaction.response.send_message("❌ Inventory not set up.", ephemeral=True)
+        return
+    await interaction.response.send_message("📦 Inventory is displayed above.", ephemeral=True)
+
+@bot.tree.command(name="setup_inventory", guild=discord.Object(id=GUILD_ID))
 async def setup_inventory(interaction: discord.Interaction):
     embed = discord.Embed(title="📦 Ørder Storage", color=discord.Color.dark_red())
     msg = await interaction.channel.send(embed=embed)
@@ -160,57 +164,6 @@ async def deposit(interaction: discord.Interaction, category: str, item: str, am
     )
 
     await update_inventory_embed(interaction.guild)
-
-@bot.tree.command(name="pay", guild=discord.Object(id=GUILD_ID))
-async def pay(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    item: str,
-    amount: int
-):
-    if not has_hierarchy(interaction):
-        await interaction.response.send_message("❌ No permission.", ephemeral=True)
-        return
-
-    inventory, loans = load_data()
-    user_id = str(member.id)
-
-    if user_id not in loans or item not in loans[user_id]:
-        await interaction.response.send_message(
-            "❌ That loan does not exist.",
-            ephemeral=True
-        )
-        return
-
-    if amount > loans[user_id][item]:
-        await interaction.response.send_message(
-            "❌ Cannot pay more than owed.",
-            ephemeral=True
-        )
-        return
-
-    # Deduct from loan
-    loans[user_id][item] -= amount
-    if loans[user_id][item] <= 0:
-        del loans[user_id][item]
-
-    if not loans[user_id]:
-        del loans[user_id]
-
-    save_data(inventory, loans)
-
-    await interaction.response.send_message(
-        f"✅ **{amount}x {item}** paid back by {member.mention}.",
-        ephemeral=True
-    )
-
-    await log_action(
-        interaction.guild,
-        f"💰 Pay | {interaction.user.mention} marked {amount}x {item} as paid by {member.mention}"
-    )
-
-    await update_inventory_embed(interaction.guild)
-
 
 @bot.tree.command(name="withdraw", guild=discord.Object(id=GUILD_ID))
 @app_commands.autocomplete(category=category_autocomplete)
@@ -249,8 +202,10 @@ async def loan(interaction: discord.Interaction, member: discord.Member, item: s
         return
 
     inventory, loans = load_data()
-    loans.setdefault(str(member.id), {})
-    loans[str(member.id)][item] = loans[str(member.id)].get(item, 0) + amount
+    uid = str(member.id)
+
+    loans.setdefault(uid, {})
+    loans[uid][item] = loans[uid].get(item, 0) + amount
     save_data(inventory, loans)
 
     await interaction.response.send_message(
@@ -261,6 +216,54 @@ async def loan(interaction: discord.Interaction, member: discord.Member, item: s
     await log_action(
         interaction.guild,
         f"📄 Loan | {interaction.user.mention} loaned {amount}x {item} to {member.mention}"
+    )
+
+    await update_inventory_embed(interaction.guild)
+
+@bot.tree.command(name="pay", guild=discord.Object(id=GUILD_ID))
+async def pay(interaction: discord.Interaction, member: discord.Member, item: str, amount: int):
+    if not has_hierarchy(interaction):
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
+        return
+
+    inventory, loans = load_data()
+    uid = str(member.id)
+
+    if uid not in loans:
+        await interaction.response.send_message("❌ That user has no loans.", ephemeral=True)
+        return
+
+    matched_item = None
+    for loan_item in loans[uid]:
+        if loan_item.lower() == item.lower().strip():
+            matched_item = loan_item
+            break
+
+    if not matched_item:
+        await interaction.response.send_message("❌ That loan does not exist.", ephemeral=True)
+        return
+
+    if amount > loans[uid][matched_item]:
+        await interaction.response.send_message("❌ Cannot pay more than owed.", ephemeral=True)
+        return
+
+    loans[uid][matched_item] -= amount
+    if loans[uid][matched_item] <= 0:
+        del loans[uid][matched_item]
+
+    if not loans[uid]:
+        del loans[uid]
+
+    save_data(inventory, loans)
+
+    await interaction.response.send_message(
+        f"💰 **{amount}x {matched_item}** paid back by {member.mention}.",
+        ephemeral=True
+    )
+
+    await log_action(
+        interaction.guild,
+        f"💰 Pay | {interaction.user.mention} marked {amount}x {matched_item} paid by {member.mention}"
     )
 
     await update_inventory_embed(interaction.guild)
