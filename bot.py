@@ -4,17 +4,22 @@ from discord import app_commands
 import json
 import os
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+# ================= CONFIG =================
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = 192108930388721664  # YOUR SERVER ID
 
 INVENTORY_FILE = "inventory.json"
 MESSAGE_FILE = "message.json"
 
 CATEGORIES = ["weapons", "armor", "ammo", "drugs", "misc"]
 
-# ---------------- FILE HELPERS ----------------
+# ================= BOT SETUP =================
+
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# ================= FILE HELPERS =================
 
 def load_data():
     if not os.path.exists(INVENTORY_FILE):
@@ -25,7 +30,11 @@ def load_data():
 
 def save_data(inventory, loans):
     with open(INVENTORY_FILE, "w") as f:
-        json.dump({"inventory": inventory, "loans": loans}, f, indent=2)
+        json.dump(
+            {"inventory": inventory, "loans": loans},
+            f,
+            indent=2
+        )
 
 def load_message():
     if not os.path.exists(MESSAGE_FILE):
@@ -37,15 +46,19 @@ def save_message(data):
     with open(MESSAGE_FILE, "w") as f:
         json.dump(data, f)
 
-# ---------------- EMBED UPDATE ----------------
+# ================= EMBED UPDATE =================
 
-async def update_inventory_embed(guild):
-    inventory, loans = load_data()
+async def update_inventory_embed(guild: discord.Guild):
     msg_data = load_message()
     if not msg_data:
         return
 
+    inventory, loans = load_data()
+
     channel = guild.get_channel(msg_data["channel_id"])
+    if not channel:
+        return
+
     message = await channel.fetch_message(msg_data["message_id"])
 
     embed = discord.Embed(
@@ -56,12 +69,17 @@ async def update_inventory_embed(guild):
     for cat in CATEGORIES:
         items = inventory.get(cat, {})
         value = "\n".join(f"• {k}: {v}" for k, v in items.items()) or "—"
-        embed.add_field(name=cat.capitalize(), value=value, inline=False)
+        embed.add_field(
+            name=cat.capitalize(),
+            value=value,
+            inline=False
+        )
 
     loan_lines = []
     for uid, items in loans.items():
         for item, amt in items.items():
             loan_lines.append(f"<@{uid}> owes {amt}x {item}")
+
     embed.add_field(
         name="📄 Loans",
         value="\n".join(loan_lines) or "—",
@@ -70,21 +88,20 @@ async def update_inventory_embed(guild):
 
     await message.edit(embed=embed)
 
-# ---------------- BOT EVENTS ----------------
+# ================= EVENTS =================
 
 @bot.event
 async def setup_hook():
-    GUILD_ID = 192108930388721664  # your server ID
     guild = discord.Object(id=GUILD_ID)
 
-    # Clear global commands (prevents cache conflicts)
+    # 🚨 DELETE ALL GLOBAL COMMANDS
     bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
 
-    # Sync guild-only commands (instant)
+    # ✅ REGISTER GUILD COMMANDS ONLY
     await bot.tree.sync(guild=guild)
 
-    print("✅ Guild slash commands synced")
+    print("🔥 GUILD SLASH COMMANDS SYNCED 🔥")
 
 @bot.event
 async def on_ready():
@@ -92,13 +109,13 @@ async def on_ready():
     for g in bot.guilds:
         print("Connected to:", g.name, g.id)
 
-# ---------------- SLASH COMMANDS ----------------
+# ================= COMMANDS =================
 
-@bot.tree.command(name="ping", description="Test command")
+@bot.tree.command(name="ping", description="Test command", guild=discord.Object(id=GUILD_ID))
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("🏓 Pong!", ephemeral=True)
 
-@bot.tree.command(name="setup_inventory", description="Create the persistent inventory message")
+@bot.tree.command(name="setup_inventory", description="Create inventory embed", guild=discord.Object(id=GUILD_ID))
 async def setup_inventory(interaction: discord.Interaction):
     embed = discord.Embed(
         title="📦 Ørder Storage",
@@ -106,11 +123,18 @@ async def setup_inventory(interaction: discord.Interaction):
         color=discord.Color.dark_red()
     )
     msg = await interaction.channel.send(embed=embed)
-    save_message({"channel_id": interaction.channel.id, "message_id": msg.id})
-    await interaction.response.send_message("✅ Inventory setup complete.", ephemeral=True)
+    save_message({
+        "channel_id": interaction.channel.id,
+        "message_id": msg.id
+    })
+
+    await interaction.response.send_message(
+        "✅ Inventory setup complete.",
+        ephemeral=True
+    )
     await update_inventory_embed(interaction.guild)
 
-@bot.tree.command(name="deposit", description="Deposit items into storage")
+@bot.tree.command(name="deposit", description="Deposit items", guild=discord.Object(id=GUILD_ID))
 async def deposit(
     interaction: discord.Interaction,
     category: str,
@@ -128,12 +152,13 @@ async def deposit(
     inventory, loans = load_data()
     inventory.setdefault(category, {})
     inventory[category][item] = inventory[category].get(item, 0) + amount
+
     save_data(inventory, loans)
 
     await interaction.response.send_message("✅ Deposited.", ephemeral=True)
     await update_inventory_embed(interaction.guild)
 
-@bot.tree.command(name="withdraw", description="Withdraw items from storage")
+@bot.tree.command(name="withdraw", description="Withdraw items", guild=discord.Object(id=GUILD_ID))
 async def withdraw(
     interaction: discord.Interaction,
     category: str,
@@ -144,7 +169,10 @@ async def withdraw(
     inventory, loans = load_data()
 
     if inventory.get(category, {}).get(item, 0) < amount:
-        await interaction.response.send_message("❌ Not enough stock.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Not enough stock.",
+            ephemeral=True
+        )
         return
 
     inventory[category][item] -= amount
@@ -152,10 +180,11 @@ async def withdraw(
         del inventory[category][item]
 
     save_data(inventory, loans)
+
     await interaction.response.send_message("📤 Withdrawn.", ephemeral=True)
     await update_inventory_embed(interaction.guild)
 
-@bot.tree.command(name="loan", description="Loan items to a member")
+@bot.tree.command(name="loan", description="Loan items", guild=discord.Object(id=GUILD_ID))
 async def loan(
     interaction: discord.Interaction,
     member: discord.Member,
@@ -165,12 +194,13 @@ async def loan(
     inventory, loans = load_data()
     loans.setdefault(str(member.id), {})
     loans[str(member.id)][item] = loans[str(member.id)].get(item, 0) + amount
+
     save_data(inventory, loans)
 
     await interaction.response.send_message("📄 Loan recorded.", ephemeral=True)
     await update_inventory_embed(interaction.guild)
 
-@bot.tree.command(name="pay", description="Pay back loaned items")
+@bot.tree.command(name="pay", description="Pay back loans", guild=discord.Object(id=GUILD_ID))
 async def pay(
     interaction: discord.Interaction,
     item: str,
@@ -180,7 +210,10 @@ async def pay(
     uid = str(interaction.user.id)
 
     if uid not in loans or loans[uid].get(item, 0) < amount:
-        await interaction.response.send_message("❌ No matching loan found.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ No matching loan found.",
+            ephemeral=True
+        )
         return
 
     loans[uid][item] -= amount
@@ -190,9 +223,10 @@ async def pay(
         del loans[uid]
 
     save_data(inventory, loans)
+
     await interaction.response.send_message("✅ Loan paid.", ephemeral=True)
     await update_inventory_embed(interaction.guild)
 
-# ---------------- RUN ----------------
+# ================= RUN =================
 
 bot.run(TOKEN)
